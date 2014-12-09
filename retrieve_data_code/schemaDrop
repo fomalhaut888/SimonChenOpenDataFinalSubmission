@@ -1,0 +1,15 @@
+drop database ADWORDSDB;
+
+alter table DAILY_DATA 
+        drop 
+        foreign key fk_daily_data_to_customer;
+        
+alter table DAILY_GEO_DATA 
+        drop 
+        foreign key fk_daily_geo_data_to_customer;
+        
+drop table DAILY_DATA;
+
+drop table DAILY_GEO_DATA;
+
+drop table CUSTOMER;

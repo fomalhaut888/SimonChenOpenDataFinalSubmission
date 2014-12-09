@@ -1,0 +1,390 @@
+---
+title: "An AdWords Ad Performance Analysis by R"
+output: html_document
+---
+
+Contributed by Simon(Cheng-wei) Chen. Simon took Data Science with R class with Vivian Zhang in Oct, 2014. The post was based on her final project submission.
+
+About the project.
+
+1) **Background and goal(s)**
+
+AdWords, Google's online advertising program, lets advertisers promote their websites on Google search pages. AdWords also provides API for clients or agencies who was approved to use by Google. My goal is that I try to get basic AdWords Data by API and analyze an ad campaign with R. Some definitions are listed below.
+
+Definition:
+
+a. Customer account: A basic account can issue an AdWords ad.
+
+b. MCC(My Client Center) account: A account can manage multiple Customer or MCC accounts. 
+
+c. Clicks: When someone clicks your ad, AdWords counts that as a click.
+
+d. Impressions: How often your ad is shown.
+
+e. CTR: Clickthrough rate. A ratio showing how offten people who see your ad end up clicking it.
+
+f. Conversions: A conversion happens when someone clicks your ad and then takes an action that you've defined as valuable to your business, such as an online purchase or a call to your business from a mobile phone.
+
+g. Cost: The expense you pay for ads.
+
+2) **Data Prep**
+
+AdWords API not only provides basic Web Service syntax for programers, but also has more convenient libraries with some popular programming languague such as Java, PHP,and etc. I got my sample data with AdWords API Java Library. After getting the data, I saved it into MySQL database to access with R.
+
+Get a MCC's data of customers by AdWords API, see <https://developers.google.com/adwords/api/docs/reference/v201406/ManagedCustomerService>
+```
+public List<Map<String, String>> getCustomers(String mccId) 
+  			throws Exception{
+			
+				//the argument validation ignored			
+				
+				Credential oAuth2Credential = new OfflineCredentials.Builder()
+		        		.forApi(Api.ADWORDS)
+		        		.fromFile()
+		        		.build()
+		        		.generateCredential();
+				// Construct an AdWordsSession.
+			    AdWordsSession session = new AdWordsSession.Builder()
+			        	.fromFile()
+			        	.withOAuth2Credential(oAuth2Credential)
+			        	.build();
+			    session.setClientCustomerId(mccId);
+			    AdWordsServices adWordsServices = new AdWordsServices();
+			    ManagedCustomerServiceInterface managedCustomerService = adWordsServices
+			    		.get(session, ManagedCustomerServiceInterface.class);
+			    
+			    // Create selector.
+			    Selector selector = new Selector();
+			    selector.setFields(new String[]{"CustomerId",  "Name"});
+			    selector.setPredicates(new Predicate[] {
+			    		new Predicate("CanManageClients",
+			    				PredicateOperator.EQUALS, new String[] {"false"})});//Return Customer ,not MCC
+			    
+			    // Get results.
+			    ManagedCustomerPage page = managedCustomerService.get(selector);
+			    List<Map<String, String>> resultList = new ArrayList<Map<String, String>>();
+			    if (page.getEntries() != null) {
+						for (ManagedCustomer customer : page.getEntries()) {
+								Map<String, String> map = new HashMap<String, String>();
+								map.put("customerId", customer.getCustomerId().toString());
+								map.put("name", customer.getName());
+								resultList.add(map);
+						}
+						System.out.println("Total " + page.getTotalNumEntries() + " customers");
+			    }
+				return resultList;
+		}
+```
+Get MCC's daily data of all ad campaigns last month(2014/10) by AdWords API, see <https://developers.google.com/adwords/api/docs/appendix/reports#campaign>
+
+```
+public List<Map<String, Object>> getDailyData(String customerId){
+			Selector selector = new Selector();
+			List<String> fieldsList = Lists.newArrayList("CampaignId","CampaignName",
+					"Date", "Impressions", "Clicks", "Ctr", "ConversionsManyPerClick",
+					"ConversionRateManyPerClick", "Cost");
+			selector.getFields().addAll(fieldsList);
+			//DateRange dr = new DateRange();
+			//dr.setMin(START_DATE);
+			//dr.setMax(END_DATE);
+			//selector.setDateRange(dr);
+			
+			Predicate p1 = new Predicate();
+		    p1.setField("CampaignStatus");
+		    p1.setOperator(PredicateOperator.EQUALS);
+		    p1.getValues().add("ENABLED");
+		    selector.getPredicates().add(p1);
+		    
+		    ReportDefinition reportDefinition = new ReportDefinition();
+		    reportDefinition.setReportName("Campaign performance report #" + System.currentTimeMillis());
+		    //Last Month
+		    reportDefinition.setDateRangeType(ReportDefinitionDateRangeType.LAST_MONTH);
+		    reportDefinition.setReportType(ReportDefinitionReportType.CAMPAIGN_PERFORMANCE_REPORT);
+			reportDefinition.setDownloadFormat(DownloadFormat.XML);
+		    reportDefinition.setSelector(selector);
+		    
+		    InputStream is = null;
+		    ByteArrayOutputStream baos = null;
+		    ByteArrayInputStream bais = null;
+		    DocumentBuilderFactory documentBuilderFactory = null;
+		    DocumentBuilder documentBuilder = null;
+		    Document document = null;
+		    try{
+		    		//the argument validation ignored			
+				
+					Credential oAuth2Credential = new OfflineCredentials.Builder()
+			        		.forApi(Api.ADWORDS)
+			        		.fromFile()
+			        		.build()
+			        		.generateCredential();
+					// Construct an AdWordsSession.
+				    AdWordsSession adSession = new AdWordsSession.Builder()
+				        	.fromFile()
+				        	.withOAuth2Credential(oAuth2Credential)
+				        	.build();
+				    adSession.setClientCustomerId(customerId);
+				    
+				    ReportDownloadResponse response = null;
+				    for(int m = 0; m < 5; m++ ){
+							try{
+									response = new ReportDownloader(adSession).downloadReport(reportDefinition);
+									break;//jump out the loop once success to get data
+							}catch(Exception e){
+									System.out.println(e);
+									if(m == (5 - 1)){
+											throw e;
+									}else{
+											Thread.sleep(10 * 1000);
+									}
+							}
+					}
+				    
+				    is = response.getInputStream();
+		    		baos = new ByteArrayOutputStream();
+		    		Streams.copy(is, baos);
+		    		String xml = new String(baos.toByteArray());
+		    		baos.close();
+		    		is.close();
+		    		System.out.println("Primary xml=" + xml);
+		    		
+		    		documentBuilderFactory = DocumentBuilderFactory.newInstance();
+		    		documentBuilder = documentBuilderFactory.newDocumentBuilder();
+		    		bais = new ByteArrayInputStream(xml.getBytes());
+		    		document = documentBuilder.parse(bais);
+		    		NodeList nodeList = document.getElementsByTagName("row");
+		    		System.out.println("nodeList.getLength()=" + nodeList.getLength());
+		    		List<Map<String, Object>> resultList = new ArrayList<Map<String, Object>>();
+		    		DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+		    		NumberFormat integerFormat = new DecimalFormat("#,##0");
+		    		NumberFormat percentFormat = new DecimalFormat("#,##0.00%");
+		    		NumberFormat moneyFormat = new DecimalFormat("#,##0.00");
+		    		for(int i = 0; i < nodeList.getLength(); i++){
+		    				Node node = nodeList.item(i);
+		    				NamedNodeMap nnm = node.getAttributes();
+		    				
+		    				Map<String, Object> map = new HashMap<String, Object>();
+		    				map.put("campaignID", nnm.getNamedItem("campaignID").getNodeValue());
+		    				map.put("campaign", nnm.getNamedItem("campaign").getNodeValue());
+		    				map.put("day", df.parse(nnm.getNamedItem("day").getNodeValue()));
+		    				map.put("impressions", integerFormat.parse(nnm.getNamedItem("impressions").getNodeValue()).longValue());
+		    				map.put("clicks", integerFormat.parse(nnm.getNamedItem("clicks").getNodeValue()).longValue());
+		    				map.put("ctr", percentFormat.parse(nnm.getNamedItem("ctr").getNodeValue()).doubleValue());
+		    				map.put("conversions", integerFormat.parse(nnm.getNamedItem("conversions").getNodeValue()).longValue());
+		    				map.put("convRate", percentFormat.parse(nnm.getNamedItem("convRate").getNodeValue()).doubleValue());
+		    				map.put("cost", moneyFormat.parse(nnm.getNamedItem("cost").getNodeValue()).doubleValue() / 1000000D);
+		    				resultList.add(map);
+		    		}
+		    		
+		    		return resultList;
+		    }catch (Exception e) {
+		    		System.out.println(e);
+		    		throw new RuntimeException(e);
+		    }finally{
+			    	if(baos != null){
+				    		try{
+				    				baos.close();
+				    		}catch(Exception e){
+				    				System.out.println(e);
+				    		}
+			    	}
+			    	if(is != null){
+				    		try{
+				    				is.close();
+				    		}catch(Exception e){
+				    				System.out.println(e);
+				    		}
+			    	}
+			    	if(bais != null){
+				    		try{
+				    				bais.close();
+				    		}catch(Exception e){
+				    				System.out.println(e);
+				    		}
+			    	}
+		    }
+	}
+```
+Get MCC's daily data separated by countries last month(2014/10) by AdWords API, see <https://developers.google.com/adwords/api/docs/appendix/reports#geo>
+```
+  public List<Map<String, Object>> getDailyGeoData(String customerId){
+			...
+			List<String> fieldsList = Lists.newArrayList("CampaignId","CampaignName",
+					"CountryCriteriaId", "Date", "Impressions", "Clicks", "Ctr", 
+					"ConversionsManyPerClick", "ConversionRateManyPerClick", "Cost");
+			...
+		    
+	    ReportDefinition reportDefinition = new ReportDefinition();
+	    reportDefinition.setReportName("Geo performance report #" + System.currentTimeMillis());
+	    //Last Month
+	    reportDefinition.setDateRangeType(ReportDefinitionDateRangeType.LAST_MONTH);
+	    reportDefinition.setReportType(ReportDefinitionReportType.GEO_PERFORMANCE_REPORT);
+		  reportDefinition.setDownloadFormat(DownloadFormat.XML);
+	    reportDefinition.setSelector(selector);
+	    
+	    ...
+```
+I defined three MySQL tables to save the data above.
+```
+create database ADWORDSDB default character set utf8 default collate utf8_unicode_ci;
+
+create table CUSTOMER(
+    id bigint not null auto_increment,
+    name varchar(255),
+    primary key (id)
+) ENGINE=InnoDB;
+
+create table DAILY_DATA(
+  id bigint not null auto_increment,
+	customer bigint not null,
+	campaign_name varchar(255),
+	data_date datetime not null,
+	impressions bigint,
+	clicks bigint,
+	ctr double precision,
+	conversions bigint,
+	conv_rate double precision,
+	cost double precision,
+	primary key (id)
+) ENGINE=InnoDB;
+	
+create table DAILY_GEO_DATA(
+	id bigint not null auto_increment,
+	customer bigint not null,
+	campaign_name varchar(255),
+	country varchar(255),
+	data_date datetime not null,
+	impressions bigint,
+	clicks bigint,
+	ctr double precision,
+	conversions bigint,
+	conv_rate double precision,
+	cost double precision,
+	primary key (id)
+) ENGINE=InnoDB;
+
+alter table DAILY_DATA 
+  add index fk_daily_data_to_customer (customer), 
+	add constraint fk_daily_data_to_customer 
+	foreign key (customer) 
+	references CUSTOMER (id);
+	
+alter table DAILY_GEO_DATA 
+	add index fk_daily_geo_data_to_customer (customer), 
+	add constraint fk_daily_geo_data_to_customer 
+	foreign key (customer) 
+	references CUSTOMER (id);
+```
+
+3) **Scenario 1: I want to know the daily clicks of an ad campaign last month(2014/10).**
+```{r}
+library(RODBC)
+myconn <- odbcConnect("OpenDataDS") #ODBC Data Source has to be set on Windows console.
+daily_data <- sqlQuery(myconn, "select * from DAILY_DATA")
+close(myconn)
+head(daily_data) # from table DAILY_DATA
+sample_campaign_name <- 'Campaign0019_005' # Sample
+sample_daily_data <- subset(daily_data, campaign_name==sample_campaign_name)
+sample_daily_data$date <- as.numeric(format(sample_daily_data$data_date,'%d'))
+library(ggplot2)
+getColorByDayOfWeeks <- function(date){
+    color <- c('skyblue','red','orange','green','blue','gray','purple')
+    w <- as.integer(format(date, '%w')) + 1
+    return (color[w])
+}
+fillcolor <- sapply(sample_daily_data$data_date, FUN=getColorByDayOfWeeks)
+p1 <- ggplot(sample_daily_data,aes(x=date, y=clicks))+ 
+     geom_histogram(stat="identity",
+                   binwidth=1,
+                   fill=fillcolor,
+                   colour='black')
+print(p1)
+```
+
+4) **Scenario 2: I want to know conversions of every day of Weeks.**
+```{r}
+sample_daily_data_1_28 <- sample_daily_data[(sample_daily_data$date <= 28),]
+getStrByDayOfWeeks <- function(date){
+    str <- c('Sun','Mon','Tue','Wed','Thu','Fri','Sat')
+    w <- as.integer(format(date, '%w')) + 1
+    return (factor(str[w]))
+}
+sample_daily_data_1_28$week <- sapply(sample_daily_data_1_28$data_date, FUN=getStrByDayOfWeeks)
+conversions_total_sum <- sum(sample_daily_data_1_28$conversions)
+library(reshape2)
+sample_week_conversions <- dcast(sample_daily_data_1_28,week~.,value.var='conversions',fun=sum)
+week <- sample_week_conversions$week
+ratio <- (sample_week_conversions$./ conversions_total_sum  * 100 )
+sample_week_conversions_ratio <- data.frame(week,ratio)
+sample_week_conversions_ratio # % 
+p2 <- ggplot(sample_week_conversions_ratio, aes(x = factor(1), y=ratio, fill = week)) +
+     geom_bar(stat="identity", width = 1)+ 
+      coord_polar(theta = "y")
+print(p2)
+```
+
+5) **Scenario 3: I want to know clicks from every country.**
+```{r}
+myconn <- odbcConnect("OpenDataDS")
+sql <- paste("select * from DAILY_GEO_DATA where campaign_name = '",sample_campaign_name,"'",sep="")
+geo_data <- sqlQuery(myconn, sql)
+close(myconn)
+head(geo_data)
+geo_data$date <- factor(as.numeric(format(geo_data$data_date,'%d')))
+formatCountry <- function(country){
+    if(country == 'Taiwan' || country == 'United States'
+     ||country == 'Japan' || country=='China'
+     ||country == 'Hong Kong'){
+        return (factor(country));
+     }else{
+        return (factor('Others'))
+     }
+}
+geo_data$countryF <- sapply(geo_data$country,FUN=formatCountry);
+p3 <- ggplot(geo_data,aes(x=date,y=clicks,fill=countryF))+
+            geom_bar(stat="identity",width=1,color='black')
+print(p3)
+```
+
+6) **Scenario 4: I want to compare two similar ad campaigns.**
+```{r}
+compared_campaign_name <- 'Campaign0019_006' #sample to compare with
+compared_daily_datas <- subset(daily_data, 
+  (campaign_name == sample_campaign_name)
+|(campaign_name == compared_campaign_name))
+compared_daily_datas$date <- as.numeric(format(compared_daily_datas$data_date,'%d'))
+p4 <- ggplot(compared_daily_datas,aes(x=date,y=clicks,fill=campaign_name))+
+            geom_bar(stat="identity",width=1,color='black',
+            position=position_dodge())
+print(p4)
+```
+
+7) **Scenario 5: I want to compare ad campaigns with the mean.**
+```{r}
+daily_data_clicks_not0 <- subset(daily_data, clicks > 0) #don't calculate them if clicks are equal to 0
+daily_data_clicks_not0$date <- as.numeric(format(daily_data_clicks_not0$data_date,'%d'))
+daily_data_clicks_not0 <- dcast(data=daily_data_clicks_not0,
+      formula=date~.,
+      value.var='clicks',
+      fun=mean)
+print(daily_data_clicks_not0) #daily mean
+p5 <- ggplot(sample_daily_data,aes(x=date, y=clicks))+ 
+     geom_histogram(stat="identity",
+                   binwidth=1,
+                   fill='skyblue',
+                   colour='black') +
+     geom_line(mapping = aes(x=date, y=.), data = daily_data_clicks_not0,
+                   stat = "identity",
+                   position = "identity",
+                   color="red")
+print(p5)
+```
+
+8) **Conclusion**
+
+We can virtualize our big AdWords performance data with R and it helps us understand the operation of ad campaigns more easily.
+
+9) **Reference**
+
+1.AdWords Help: <https://support.google.com/adwords/?hl=en#topic=3119071>
+
+2.Adwords API Help: <https://developers.google.com/adwords/api/>

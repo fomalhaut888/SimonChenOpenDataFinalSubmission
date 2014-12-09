@@ -1,0 +1,48 @@
+create database ADWORDSDB default character set utf8 default collate utf8_unicode_ci;
+
+create table CUSTOMER(
+    id bigint not null auto_increment,
+    name varchar(255),
+    primary key (id)
+) ENGINE=InnoDB;
+
+create table DAILY_DATA(
+	id bigint not null auto_increment,
+	customer bigint not null,
+	campaign_name varchar(255),
+	data_date datetime not null,
+	impressions bigint,
+	clicks bigint,
+	ctr double precision,
+	conversions bigint,
+	conv_rate double precision,
+	cost double precision,
+	primary key (id)
+) ENGINE=InnoDB;
+
+alter table DAILY_DATA 
+	add index fk_daily_data_to_customer (customer), 
+	add constraint fk_daily_data_to_customer 
+	foreign key (customer) 
+	references CUSTOMER (id);
+	
+create table DAILY_GEO_DATA(
+	id bigint not null auto_increment,
+	customer bigint not null,
+	campaign_name varchar(255),
+	country varchar(255),
+	data_date datetime not null,
+	impressions bigint,
+	clicks bigint,
+	ctr double precision,
+	conversions bigint,
+	conv_rate double precision,
+	cost double precision,
+	primary key (id)
+) ENGINE=InnoDB;
+	
+alter table DAILY_GEO_DATA 
+	add index fk_daily_geo_data_to_customer (customer), 
+	add constraint fk_daily_geo_data_to_customer 
+	foreign key (customer) 
+	references CUSTOMER (id);
